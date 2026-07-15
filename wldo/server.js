@@ -6,6 +6,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
@@ -31,6 +32,7 @@ async function initSchema() {
     "ALTER TABLE partidos ADD COLUMN IF NOT EXISTS estado varchar(20)",
     "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol varchar(20) DEFAULT 'viewer'",
     "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ultimo_acceso timestamp",
+    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash varchar(255)",
     "ALTER TABLE grupos ADD COLUMN IF NOT EXISTS selecciones jsonb"
   ];
   for (const query of queries) {
@@ -42,11 +44,58 @@ async function initSchema() {
   }
 }
 
+// ─── CONTRASEÑAS (hash con scrypt, sin dependencias externas) ────────────────────
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  return salt + ':' + hash;
+}
+function verifyPassword(password, stored) {
+  if (!stored || !stored.includes(':')) return false;
+  const [salt, hash] = stored.split(':');
+  const test = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  const a = Buffer.from(hash, 'hex');
+  const b = Buffer.from(test, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Asegura las 3 cuentas demo con su rol y contraseña por defecto.
+async function seedUsers() {
+  const defaults = [
+    { nombre: 'Administrador', email: 'admin@mundial2026.mx',  rol: 'admin',  pass: 'Admin#2026'  },
+    { nombre: 'Editor',        email: 'editor@mundial2026.mx', rol: 'editor', pass: 'Editor#2026' },
+    { nombre: 'Visitante',     email: 'viewer@mundial2026.mx', rol: 'viewer', pass: 'Viewer#2026' }
+  ];
+  for (const u of defaults) {
+    const existing = await pool.query(
+      'SELECT id_usuario, password_hash FROM usuarios WHERE LOWER(email)=LOWER($1) LIMIT 1', [u.email]
+    );
+    if (existing.rows.length === 0) {
+      await pool.query(
+        'INSERT INTO usuarios (nombre, email, rol, password_hash, fecha_registro) VALUES ($1,$2,$3,$4,NOW())',
+        [u.nombre, u.email, u.rol, hashPassword(u.pass)]
+      );
+      console.log('👤 Usuario creado:', u.email, '(' + u.rol + ')');
+    } else {
+      const row = existing.rows[0];
+      // Fija el rol correcto; asigna contraseña por defecto solo si aún no tiene.
+      if (row.password_hash) {
+        await pool.query('UPDATE usuarios SET rol=$1 WHERE id_usuario=$2', [u.rol, row.id_usuario]);
+      } else {
+        await pool.query('UPDATE usuarios SET rol=$1, password_hash=$2 WHERE id_usuario=$3',
+          [u.rol, hashPassword(u.pass), row.id_usuario]);
+      }
+    }
+  }
+}
+
 pool.connect()
   .then(async () => {
     console.log('✅ Conectado a PostgreSQL — postgresql://localhost:5432/maps');
     await initSchema();
     console.log('✅ Esquema de base de datos inicializado');
+    await seedUsers();
+    console.log('✅ Usuarios demo verificados (admin/editor/viewer)');
   })
   .catch(err => console.error('❌ Error conectando a PostgreSQL:', err.message));
 
@@ -324,6 +373,140 @@ app.delete('/api/partidos/:id', async (req, res) => {
   } catch (e) { err(res, e); }
 });
 
+// ─── SIMULACIÓN DE PARTIDOS (persistente) ───────────────────────────────────────
+// Suma/resta el marcador de un partido a la fila de clasificación del equipo.
+async function ajustarClasificacion(client, idSel, idGrupo, favor, contra, signo) {
+  const win = favor > contra ? 1 : 0;
+  const draw = favor === contra ? 1 : 0;
+  const loss = favor < contra ? 1 : 0;
+  const pts = win * 3 + draw;
+  const existing = await client.query(
+    'SELECT id_clasificacion FROM clasificaciones WHERE id_seleccion=$1 LIMIT 1', [idSel]
+  );
+  if (existing.rows[0]) {
+    await client.query(
+      `UPDATE clasificaciones SET
+         partidos_jugados = GREATEST(COALESCE(partidos_jugados,0) + $2, 0),
+         victorias        = GREATEST(COALESCE(victorias,0)        + $3, 0),
+         empates          = GREATEST(COALESCE(empates,0)          + $4, 0),
+         derrotas         = GREATEST(COALESCE(derrotas,0)         + $5, 0),
+         goles_a_favor    = GREATEST(COALESCE(goles_a_favor,0)    + $6, 0),
+         goles_en_contra  = GREATEST(COALESCE(goles_en_contra,0)  + $7, 0),
+         puntos           = GREATEST(COALESCE(puntos,0)           + $8, 0),
+         diferencia_goles = GREATEST(COALESCE(goles_a_favor,0) + $6, 0) - GREATEST(COALESCE(goles_en_contra,0) + $7, 0)
+       WHERE id_seleccion=$1`,
+      [idSel, signo * 1, signo * win, signo * draw, signo * loss, signo * favor, signo * contra, signo * pts]
+    );
+  } else if (signo > 0) {
+    await client.query(
+      `INSERT INTO clasificaciones
+         (id_seleccion, id_grupo, puntos, partidos_jugados, victorias, empates, derrotas, goles_a_favor, goles_en_contra, diferencia_goles, posicion)
+       VALUES ($1,$2,$3,1,$4,$5,$6,$7,$8,$9,0)`,
+      [idSel, idGrupo, pts, win, draw, loss, favor, contra, favor - contra]
+    );
+  }
+}
+
+// Recalcula la posición dentro de un grupo (pts, dif, goles a favor).
+async function recomputarPosiciones(client, idGrupo) {
+  if (!idGrupo) return;
+  await client.query(
+    `WITH ranked AS (
+       SELECT id_clasificacion,
+              ROW_NUMBER() OVER (
+                ORDER BY COALESCE(puntos,0) DESC,
+                         COALESCE(diferencia_goles,0) DESC,
+                         COALESCE(goles_a_favor,0) DESC
+              ) AS pos
+       FROM clasificaciones WHERE id_grupo=$1
+     )
+     UPDATE clasificaciones c SET posicion = r.pos
+     FROM ranked r WHERE r.id_clasificacion = c.id_clasificacion`,
+    [idGrupo]
+  );
+}
+
+// Registra un partido simulado y actualiza la clasificación si ambos son del mismo grupo.
+app.post('/api/partidos/simular', async (req, res) => {
+  const { local, visitante, golesLocal, golesVisitante } = req.body || {};
+  const gl = parseInt(golesLocal, 10);
+  const gv = parseInt(golesVisitante, 10);
+  if (!local || !visitante || Number.isNaN(gl) || Number.isNaN(gv)) {
+    return res.status(400).json({ ok: false, error: 'Datos de partido inválidos' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const locRow = await client.query('SELECT id_seleccion, id_grupo FROM selecciones WHERE nombre=$1 LIMIT 1', [local]);
+    const visRow = await client.query('SELECT id_seleccion, id_grupo FROM selecciones WHERE nombre=$1 LIMIT 1', [visitante]);
+    if (!locRow.rows[0] || !visRow.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Selección no encontrada en la base de datos' });
+    }
+    const loc = locRow.rows[0], vis = visRow.rows[0];
+    const mismoGrupo = loc.id_grupo && loc.id_grupo === vis.id_grupo;
+
+    let grupoNombre = null;
+    if (mismoGrupo) {
+      const g = await client.query('SELECT nombre FROM grupos WHERE id_grupo=$1', [loc.id_grupo]);
+      grupoNombre = g.rows[0] ? String(g.rows[0].nombre).trim() : null;
+    }
+
+    const ins = await client.query(
+      `INSERT INTO partidos (id_local, id_visitante, id_estadio, fecha_hora, goles_local, goles_visitante, fase, grupo, estado)
+       VALUES ($1,$2,NULL,NOW(),$3,$4,'Simulación',$5,'completado') RETURNING id_partido AS id`,
+      [loc.id_seleccion, vis.id_seleccion, gl, gv, grupoNombre]
+    );
+
+    if (mismoGrupo) {
+      await ajustarClasificacion(client, loc.id_seleccion, loc.id_grupo, gl, gv, +1);
+      await ajustarClasificacion(client, vis.id_seleccion, vis.id_grupo, gv, gl, +1);
+      await recomputarPosiciones(client, loc.id_grupo);
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, data: { id_partido: ins.rows[0].id, actualizoClasificacion: !!mismoGrupo, grupo: grupoNombre } });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    err(res, e);
+  } finally {
+    client.release();
+  }
+});
+
+// Borra todos los partidos simulados y revierte su efecto en la clasificación.
+app.post('/api/partidos/simular/reset', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const sims = await client.query(
+      `SELECT p.id_local, p.id_visitante, p.goles_local, p.goles_visitante,
+              sl.id_grupo AS grupo_local, sv.id_grupo AS grupo_visitante
+         FROM partidos p
+         LEFT JOIN selecciones sl ON sl.id_seleccion = p.id_local
+         LEFT JOIN selecciones sv ON sv.id_seleccion = p.id_visitante
+        WHERE p.fase = 'Simulación'`
+    );
+    const gruposAfectados = new Set();
+    for (const m of sims.rows) {
+      const mismoGrupo = m.grupo_local && m.grupo_local === m.grupo_visitante;
+      if (!mismoGrupo) continue; // los cruces entre grupos no tocaron la clasificación
+      await ajustarClasificacion(client, m.id_local, m.grupo_local, m.goles_local, m.goles_visitante, -1);
+      await ajustarClasificacion(client, m.id_visitante, m.grupo_visitante, m.goles_visitante, m.goles_local, -1);
+      gruposAfectados.add(m.grupo_local);
+    }
+    for (const g of gruposAfectados) await recomputarPosiciones(client, g);
+    const del = await client.query("DELETE FROM partidos WHERE fase='Simulación'");
+    await client.query('COMMIT');
+    res.json({ ok: true, data: { eliminados: del.rowCount } });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    err(res, e);
+  } finally {
+    client.release();
+  }
+});
+
 // ─── GRUPOS ────────────────────────────────────────────────────────────────────
 app.get('/api/grupos', async (req, res) => {
   try {
@@ -436,6 +619,27 @@ app.post('/api/fase_final', async (req, res) => {
   } catch (e) { err(res, e); }
 });
 
+// ─── AUTENTICACIÓN ─────────────────────────────────────────────────────────────
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ ok: false, error: 'Ingresa correo y contraseña' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id_usuario, nombre, email, COALESCE(rol, 'viewer') AS rol, password_hash
+         FROM usuarios WHERE LOWER(email)=LOWER($1) LIMIT 1`,
+      [String(email).trim()]
+    );
+    const user = result.rows[0];
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      return res.status(401).json({ ok: false, error: 'Correo o contraseña incorrectos' });
+    }
+    await pool.query('UPDATE usuarios SET ultimo_acceso=NOW() WHERE id_usuario=$1', [user.id_usuario]);
+    res.json({ ok: true, data: { nombre: user.nombre, email: user.email, rol: user.rol } });
+  } catch (e) { err(res, e); }
+});
+
 // ─── USUARIOS ──────────────────────────────────────────────────────────────────
 app.get('/api/usuarios', async (req, res) => {
   try {
@@ -452,12 +656,13 @@ app.get('/api/usuarios', async (req, res) => {
 });
 
 app.post('/api/usuarios', async (req, res) => {
-  const { nombre, email, rol } = req.body;
+  const { nombre, email, rol, password } = req.body;
   try {
+    const hash = password ? hashPassword(password) : null;
     const result = await pool.query(
-      `INSERT INTO usuarios (nombre, email, rol, fecha_registro, ultimo_acceso)
-       VALUES ($1,$2,$3,NOW(),NOW()) RETURNING id_usuario AS id, nombre, email, rol, ultimo_acceso`,
-      [nombre, email, rol || 'viewer']
+      `INSERT INTO usuarios (nombre, email, rol, password_hash, fecha_registro, ultimo_acceso)
+       VALUES ($1,$2,$3,$4,NOW(),NOW()) RETURNING id_usuario AS id, nombre, email, rol, ultimo_acceso`,
+      [nombre, email, rol || 'viewer', hash]
     );
     res.json({ ok: true, data: result.rows[0] });
   } catch (e) { err(res, e); }

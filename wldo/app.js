@@ -14,6 +14,25 @@ var routeLayer = null;
 // URL base de la API (servidor Node.js)
 var API_BASE = 'http://localhost:3000/api';
 
+// ─── PERMISOS POR ROL ──────────────────────────────────────────────────────────
+// panel: abrir el panel Administrador · usuarios: gestionar cuentas
+// editar: CRUD de contenido · simular: simular partidos y modificar tablas
+var PERMISOS = {
+  admin:  { panel: true,  usuarios: true,  editar: true,  simular: true  },
+  editor: { panel: true,  usuarios: false, editar: true,  simular: true  },
+  viewer: { panel: false, usuarios: false, editar: false, simular: false }
+};
+function puede(accion) {
+  return !!(PERMISOS[currentRole] && PERMISOS[currentRole][accion]);
+}
+
+// Credenciales demo (autollenado al elegir una pastilla de rol)
+var DEMO_CREDS = {
+  admin:  { user: 'admin@mundial2026.mx',  pass: 'Admin#2026'  },
+  editor: { user: 'editor@mundial2026.mx', pass: 'Editor#2026' },
+  viewer: { user: 'viewer@mundial2026.mx', pass: 'Viewer#2026' }
+};
+
 // ─── NOTIFICACIÓN TOAST ────────────────────────────────────────────────────────
 function showToast(msg, type) {
   var t = type || 'success';
@@ -80,22 +99,63 @@ async function apiDelete(path) {
 }
 
 // ─── AUTENTICACIÓN ─────────────────────────────────────────────────────────────
+// La pastilla solo autollena las credenciales demo; el rol real lo define el login.
 function selectRole(el) {
   document.querySelectorAll('.role-pill').forEach(p => p.classList.remove('active'));
   el.classList.add('active');
-  currentRole = el.dataset.role;
+  var c = DEMO_CREDS[el.dataset.role];
+  if (c) {
+    document.getElementById('login-user').value = c.user;
+    document.getElementById('login-pass').value = c.pass;
+  }
+  var err = document.getElementById('login-error');
+  if (err) err.style.display = 'none';
 }
 
-function doLogin() {
+async function doLogin() {
+  var email = (document.getElementById('login-user').value || '').trim();
+  var pass = document.getElementById('login-pass').value || '';
+  var errBox = document.getElementById('login-error');
+  var btn = document.getElementById('btn-login');
+  function showError(msg) {
+    if (errBox) { errBox.textContent = msg; errBox.style.display = 'block'; }
+    else showToast(msg, 'error');
+  }
+  if (errBox) errBox.style.display = 'none';
+
+  if (!email || !pass) { showError('Ingresa tu correo y contraseña.'); return; }
+
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.7'; }
+  var resp = await apiPost('/login', { email: email, password: pass });
+  if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+
+  if (!resp || !resp.ok) {
+    var msg = (resp && resp.error) || '';
+    if (!msg || /failed to fetch|networkerror|load failed/i.test(msg)) {
+      showError('No se pudo conectar con el servidor. Inicia el backend (npm start) y verifica PostgreSQL.');
+    } else {
+      showError(msg); // p.ej. "Correo o contraseña incorrectos"
+    }
+    return;
+  }
+  enterApp(resp.data);
+}
+
+// Configura la interfaz una vez validado el usuario (rol proveniente de la DB).
+function enterApp(user) {
+  currentRole = (user && user.rol) || 'viewer';
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('sidebar').style.display = 'flex';
   document.getElementById('main').style.display = 'flex';
   var roleNames = { admin: 'Administrador', editor: 'Editor de contenido', viewer: 'Visitante' };
-  document.getElementById('user-name-disp').textContent = currentRole === 'admin' ? 'Admin' : currentRole === 'editor' ? 'Editor' : 'Visitante';
-  document.getElementById('user-role-disp').textContent = roleNames[currentRole];
-  document.getElementById('user-avatar').textContent = currentRole[0].toUpperCase();
-  document.getElementById('admin-section').style.display = currentRole === 'viewer' ? 'none' : 'block';
-  document.getElementById('admin-nav').style.display = currentRole === 'viewer' ? 'none' : 'flex';
+  var nombre = (user && user.nombre) || roleNames[currentRole] || 'Usuario';
+  document.getElementById('user-name-disp').textContent = nombre;
+  document.getElementById('user-role-disp').textContent = roleNames[currentRole] || currentRole;
+  document.getElementById('user-avatar').textContent = (nombre[0] || 'U').toUpperCase();
+  // Solo admin y editor ven el panel de gestión.
+  var verPanel = puede('panel');
+  document.getElementById('admin-section').style.display = verPanel ? 'block' : 'none';
+  document.getElementById('admin-nav').style.display = verPanel ? 'flex' : 'none';
   document.getElementById('db-badge').style.display = 'flex';
   nav('dashboard', document.querySelector('.nav-item[onclick*="dashboard"]'));
   renderConfederaciones();
@@ -123,6 +183,11 @@ function doLogout() {
   document.getElementById('admin-section').style.display = 'block';
   document.getElementById('admin-nav').style.display = 'flex';
   currentAdminTab = 'selecciones';
+  // Deja el formulario listo y limpio para el siguiente ingreso.
+  document.getElementById('login-user').value = DEMO_CREDS.admin.user;
+  document.getElementById('login-pass').value = DEMO_CREDS.admin.pass;
+  var err = document.getElementById('login-error');
+  if (err) err.style.display = 'none';
 }
 
 // ─── NAVEGACIÓN ────────────────────────────────────────────────────────────────
@@ -365,6 +430,16 @@ function renderSimulador() {
   var box = document.getElementById('simulador-box');
   if (!box) return;
   var opts = selData.map(s => `<option value="${s.name}">${s.flag} ${s.name}</option>`).join('');
+  var acciones = puede('simular') ? `
+    <div class="sim-actions" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+      <button class="btn-sm primary sim-btn" onclick="simularPartido()"><i class="ti ti-player-play"></i> Simular partido</button>
+      <button class="btn-sm sim-btn" onclick="restablecerTablas()"><i class="ti ti-rotate-2"></i> Restablecer tablas</button>
+    </div>
+    <div class="sim-hint" style="text-align:center;font-size:11.5px;color:var(--color-text-secondary);margin-top:8px">Cada simulación suma un partido a las tablas de puntos y clasificación. Recarga la página o pulsa «Restablecer» para volver a los resultados oficiales.</div>
+  ` : `
+    <div class="sim-hint" style="display:flex;align-items:center;gap:8px;justify-content:center;margin-top:8px;padding:9px 12px;border-radius:8px;background:rgba(239,68,68,0.10);color:#ef4444;font-size:12.5px">
+      <i class="ti ti-lock"></i> Modo solo lectura: tu rol de Visitante no puede simular partidos ni modificar las tablas.
+    </div>`;
   box.innerHTML = `
   <div class="sim-panel">
     <div class="sim-teams">
@@ -378,11 +453,7 @@ function renderSimulador() {
         <select class="form-input" id="sim-away">${opts}</select>
       </div>
     </div>
-    <div class="sim-actions" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
-      <button class="btn-sm primary sim-btn" onclick="simularPartido()"><i class="ti ti-player-play"></i> Simular partido</button>
-      <button class="btn-sm sim-btn" onclick="restablecerTablas()"><i class="ti ti-rotate-2"></i> Restablecer tablas</button>
-    </div>
-    <div class="sim-hint" style="text-align:center;font-size:11.5px;color:var(--color-text-secondary);margin-top:8px">Cada simulación suma un partido a las tablas de puntos y clasificación. Recarga la página o pulsa «Restablecer» para volver a los resultados oficiales.</div>
+    ${acciones}
     <div id="sim-result"></div>
   </div>`;
   var away = document.getElementById('sim-away');
@@ -504,23 +575,39 @@ function aplicarResultado(homeN, awayN, hg, ag) {
   return mismoGrupo ? groupByTeam[homeN] : null;
 }
 
-// Restablece las tablas al estado oficial cargado al iniciar la sesión.
-function restablecerTablas() {
-  if (!_snapshotTablas) { showToast('Las tablas ya están en su estado oficial', 'info'); return; }
-  var snap = _snapshotTablas;
-  Object.keys(statsByTeam).forEach(k => delete statsByTeam[k]);
-  Object.entries(snap.statsByTeam).forEach(([k, v]) => { statsByTeam[k] = Object.assign({}, v); });
-  gruposData.length = 0;
-  snap.gruposData.forEach(g => gruposData.push(JSON.parse(JSON.stringify(g))));
-  tablaGeneral.length = 0;
-  snap.tablaGeneral.forEach(r => tablaGeneral.push(r.slice()));
-  _snapshotTablas = null;
-  rebuildSelData();
-  renderDraw(); renderGrupos(); renderSelecciones();
-  showToast('Tablas restablecidas al estado oficial', 'success');
+// Restablece las tablas al estado oficial: revierte los cambios locales de la sesión
+// y borra los partidos simulados de la base de datos (revirtiendo la clasificación).
+async function restablecerTablas() {
+  if (!puede('simular')) { showToast('Tu rol no permite modificar las tablas', 'error'); return; }
+
+  var huboLocal = !!_snapshotTablas;
+  if (huboLocal) {
+    var snap = _snapshotTablas;
+    Object.keys(statsByTeam).forEach(k => delete statsByTeam[k]);
+    Object.entries(snap.statsByTeam).forEach(([k, v]) => { statsByTeam[k] = Object.assign({}, v); });
+    gruposData.length = 0;
+    snap.gruposData.forEach(g => gruposData.push(JSON.parse(JSON.stringify(g))));
+    tablaGeneral.length = 0;
+    snap.tablaGeneral.forEach(r => tablaGeneral.push(r.slice()));
+    _snapshotTablas = null;
+    rebuildSelData();
+    renderDraw(); renderGrupos(); renderSelecciones();
+  }
+
+  // Revertir también en la base de datos.
+  var resp = await apiPost('/partidos/simular/reset', {});
+  if (resp && resp.ok) {
+    var n = resp.data ? (resp.data.eliminados || 0) : 0;
+    showToast('Restablecido: ' + n + ' simulación(es) borradas de la base de datos' + (huboLocal ? ' y tablas locales' : ''), 'success');
+  } else if (huboLocal) {
+    showToast('Tablas locales restablecidas (base de datos no disponible)', 'info');
+  } else {
+    showToast('Las tablas ya están en su estado oficial', 'info');
+  }
 }
 
 function simularPartido() {
+  if (!puede('simular')) { showToast('Tu rol no permite simular partidos', 'error'); return; }
   var homeN = document.getElementById('sim-home').value;
   var awayN = document.getElementById('sim-away').value;
   if (homeN === awayN) { showToast('Elige dos selecciones distintas', 'error'); return; }
@@ -573,6 +660,9 @@ function simularPartido() {
       <span>Resultado sumado a la ${alcance}.</span>
       <a onclick="nav('clasificacion', document.querySelector('.nav-item[onclick*=clasificacion]'))" style="cursor:pointer;text-decoration:underline;font-weight:600">Ver tabla</a>
     </div>
+    <div id="sim-db-status" style="display:flex;align-items:center;gap:8px;justify-content:center;margin:-2px 0 10px;font-size:12px;color:var(--color-text-secondary)">
+      <i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Guardando en la base de datos…
+    </div>
     <div class="goal-timeline">
       <div class="goal-timeline-title"><i class="ti ti-ball-football"></i> Goleadores</div>
       ${timeline}
@@ -580,6 +670,32 @@ function simularPartido() {
     <div class="share-btns" style="justify-content:center;margin-top:10px">
       <button class="share-btn share-wa" onclick="sharePartido('whatsapp','${homeN}','${awayN}','${hg} — ${ag}')"><i class="ti ti-brand-whatsapp"></i> Compartir resultado</button>
     </div>`;
+
+  // Persistir el resultado en PostgreSQL (partido + clasificación)
+  persistirSimulacion(homeN, awayN, hg, ag);
+}
+
+// Guarda el partido simulado en la base de datos y refleja el estado en la interfaz.
+async function persistirSimulacion(homeN, awayN, hg, ag) {
+  var resp = await apiPost('/partidos/simular', {
+    local: homeN, visitante: awayN, golesLocal: hg, golesVisitante: ag
+  });
+  var el = document.getElementById('sim-db-status');
+  if (!el) return;
+  if (resp && resp.ok) {
+    var detalle = resp.data && resp.data.actualizoClasificacion
+      ? 'partido + clasificación del grupo actualizados'
+      : 'partido registrado';
+    el.innerHTML = '<i class="ti ti-database"></i> Guardado en la base de datos (' + detalle + ').';
+    el.style.color = 'var(--color-text-success,#22c55e)';
+  } else {
+    var msg = (resp && resp.error) || '';
+    var noConexion = !msg || /failed to fetch|networkerror|load failed/i.test(msg);
+    el.innerHTML = '<i class="ti ti-database-off"></i> ' + (noConexion
+      ? 'No se pudo guardar en la base de datos (cambio solo local). Inicia el backend.'
+      : ('No se guardó en la base de datos: ' + msg));
+    el.style.color = '#ef4444';
+  }
 }
 
 // ─── FASE FINAL (ELIMINATORIAS REALES DEL TORNEO) ───────────────────────────────
@@ -1146,10 +1262,16 @@ function shareRoute(net) {
 
 // ─── PANEL ADMINISTRATIVO ──────────────────────────────────────────────────────
 function renderAdmin() {
-  var isAdmin = currentRole === 'admin';
-  document.getElementById('admin-no-access').style.display = isAdmin ? 'none' : 'block';
-  document.getElementById('admin-panel').style.display = isAdmin ? 'block' : 'none';
-  if (isAdmin) loadAdminTab(currentAdminTab);
+  var verPanel = puede('panel');
+  document.getElementById('admin-no-access').style.display = verPanel ? 'none' : 'block';
+  document.getElementById('admin-panel').style.display = verPanel ? 'block' : 'none';
+  // La gestión de usuarios es exclusiva del administrador.
+  var tabUsuarios = document.getElementById('admin-tab-usuarios');
+  if (tabUsuarios) tabUsuarios.style.display = puede('usuarios') ? '' : 'none';
+  if (!verPanel) return;
+  // Si el rol no puede gestionar usuarios pero estaba en esa pestaña, vuelve a Selecciones.
+  if (currentAdminTab === 'usuarios' && !puede('usuarios')) currentAdminTab = 'selecciones';
+  loadAdminTab(currentAdminTab);
 }
 
 function adminTab(tab, el) {
@@ -1167,7 +1289,10 @@ function loadAdminTab(tab) {
   else if (tab === 'estadios') loadAdminEstadios();
   else if (tab === 'partidos') loadAdminPartidos();
   else if (tab === 'grupos')   loadAdminGrupos();
-  else if (tab === 'usuarios') loadAdminUsuarios();
+  else if (tab === 'usuarios') {
+    if (!puede('usuarios')) { showToast('Solo el administrador gestiona usuarios', 'error'); currentAdminTab = 'selecciones'; loadAdminSelecciones(); return; }
+    loadAdminUsuarios();
+  }
 }
 
 // ── SELECCIONES ────────────────────────────────────────────────────────────────

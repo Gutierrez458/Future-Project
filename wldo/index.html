@@ -1,3 +1,4 @@
+-- Active: 1781826501698@@127.0.0.1@5432@maps
 
 <!DOCTYPE html>
 <html lang="es">
@@ -30,16 +31,17 @@
       </div>
       <div class="form-group">
         <label>Usuario</label>
-        <input type="text" id="login-user" value="admin@mundial2026.mx" placeholder="usuario@ejemplo.com">
+        <input type="text" id="login-user" value="admin@mundial2026.mx" placeholder="usuario@ejemplo.com" onkeydown="if(event.key==='Enter')doLogin()">
       </div>
       <div class="form-group">
         <label>Contraseña</label>
-        <input type="password" id="login-pass" value="••••••••" placeholder="Contraseña">
+        <input type="password" id="login-pass" value="Admin#2026" placeholder="Contraseña" onkeydown="if(event.key==='Enter')doLogin()">
       </div>
-      <button class="btn-login" onclick="doLogin()">
+      <div id="login-error" class="login-error" style="display:none;margin-bottom:10px;padding:9px 12px;border-radius:8px;background:rgba(239,68,68,0.12);color:#ef4444;font-size:12.5px"></div>
+      <button class="btn-login" id="btn-login" onclick="doLogin()">
         <i class="ti ti-login"></i> INGRESAR AL SISTEMA
       </button>
-      <div class="login-hint">Demo: Admin · Editor · Visitante — todos con acceso habilitado</div>
+      <div class="login-hint">Demo — admin@mundial2026.mx / Admin#2026 · editor@… / Editor#2026 · viewer@… / Viewer#2026</div>
     </div>
   </div>
 
@@ -309,7 +311,7 @@
             <div class="admin-tab" onclick="adminTab('estadios',this)">Estadios</div>
             <div class="admin-tab" onclick="adminTab('partidos',this)">Partidos</div>
             <div class="admin-tab" onclick="adminTab('grupos',this)">Grupos</div>
-            <div class="admin-tab" onclick="adminTab('usuarios',this)">Usuarios</div>
+            <div class="admin-tab" id="admin-tab-usuarios" onclick="adminTab('usuarios',this)">Usuarios</div>
           </div>
           <div id="admin-content"></div>
         </div>
