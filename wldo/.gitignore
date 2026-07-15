@@ -1,0 +1,12 @@
+# Dependencias (Render las instala con "npm install")
+node_modules/
+
+# Volcado de la base de datos (contiene datos y hashes de contraseñas — NO subir)
+maps_dump.sql
+
+# Variables de entorno locales
+.env
+
+# Logs y temporales
+*.log
+npm-debug.log*

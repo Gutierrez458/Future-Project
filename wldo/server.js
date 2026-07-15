@@ -10,16 +10,21 @@ const crypto = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
-const PORT = 3000;
+// En Render el puerto lo asigna la plataforma vía process.env.PORT; en local usa 3000.
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname)); // Sirve archivos estáticos (index.html, etc.)
 
-// Conexión a PostgreSQL
+// Conexión a PostgreSQL.
+// - En Render: usa la variable de entorno DATABASE_URL (la da la base de datos de Render) con SSL.
+// - En tu máquina: si no existe esa variable, usa tu base local de siempre.
+const usaRenderDB = !!process.env.DATABASE_URL;
 const pool = new Pool({
-  connectionString: 'postgresql://postgres:camaro@localhost:5432/maps',
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:camaro@localhost:5432/maps',
+  ssl: usaRenderDB ? { rejectUnauthorized: false } : false,
 });
 
 async function initSchema() {

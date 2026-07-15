@@ -11,8 +11,12 @@ var leafletMap = null;
 var mapEstadio = null;
 var routeLayer = null;
 
-// URL base de la API (servidor Node.js)
-var API_BASE = 'http://localhost:3000/api';
+// URL base de la API (servidor Node.js).
+// Si la página se abre A TRAVÉS del servidor (http://localhost:3000, http://<IP-de-la-lap>:3000
+// o una URL en la nube), usa el MISMO host automáticamente → así ambas laptops se conectan
+// al mismo servidor y base de datos sin tener que editar nada en cada dispositivo.
+// Solo si abres el archivo directo (file://) recurre al servidor local.
+var API_BASE = (location.protocol === 'file:') ? 'http://localhost:3000/api' : '/api';
 
 // ─── PERMISOS POR ROL ──────────────────────────────────────────────────────────
 // panel: abrir el panel Administrador · usuarios: gestionar cuentas
