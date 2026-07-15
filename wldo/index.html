@@ -1,0 +1,359 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sistema Mundial 2026</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+  <!-- LOGIN -->
+  <div id="login-screen">
+    <div class="login-hero">
+      <div class="login-flag-bar"><span></span><span></span><span></span><span></span><span></span></div>
+      <br>
+      <span class="wc-trophy">🏆</span>
+      <div class="login-title">FIFA World Cup 2026</div>
+      <div class="login-sub">Sistema de Gestión Oficial</div>
+    </div>
+    <div class="login-form-box">
+      <h2>Selecciona tu rol de acceso</h2>
+      <div class="role-pills" id="role-pills">
+        <div class="role-pill active" data-role="admin" onclick="selectRole(this)">Admin</div>
+        <div class="role-pill" data-role="editor" onclick="selectRole(this)">Editor</div>
+        <div class="role-pill" data-role="viewer" onclick="selectRole(this)">Visitante</div>
+      </div>
+      <div class="form-group">
+        <label>Usuario</label>
+        <input type="text" id="login-user" value="admin@mundial2026.mx" placeholder="usuario@ejemplo.com">
+      </div>
+      <div class="form-group">
+        <label>Contraseña</label>
+        <input type="password" id="login-pass" value="••••••••" placeholder="Contraseña">
+      </div>
+      <button class="btn-login" onclick="doLogin()">
+        <i class="ti ti-login"></i> INGRESAR AL SISTEMA
+      </button>
+      <div class="login-hint">Demo: Admin · Editor · Visitante — todos con acceso habilitado</div>
+    </div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <div id="sidebar" style="display:none">
+    <div class="sidebar-logo">
+      <div class="logo-title">Mundial 2026</div>
+      <div class="logo-sub">MX · USA · CAN</div>
+    </div>
+    <div class="sidebar-user">
+      <div class="user-avatar" id="user-avatar">A</div>
+      <div class="user-info">
+        <div class="user-name" id="user-name-disp">Admin</div>
+        <div class="user-role" id="user-role-disp">Administrador</div>
+      </div>
+    </div>
+    <div class="nav-section">Principal</div>
+    <div class="nav-item active" onclick="nav('dashboard', this)"><i class="ti ti-home" aria-hidden="true"></i> Inicio</div>
+    <div class="nav-item" onclick="nav('confederaciones', this)"><i class="ti ti-world" aria-hidden="true"></i> Confederaciones <span class="nav-badge">6</span></div>
+    <div class="nav-item" onclick="nav('selecciones', this)"><i class="ti ti-flag-2" aria-hidden="true"></i> Selecciones <span class="nav-badge">48</span></div>
+    <div class="nav-section">Competición</div>
+    <div class="nav-item" onclick="nav('grupos', this)"><i class="ti ti-grid-dots" aria-hidden="true"></i> Grupos <span class="nav-badge">12</span></div>
+    <div class="nav-item" onclick="nav('calendario', this)"><i class="ti ti-calendar-event" aria-hidden="true"></i> Calendario</div>
+    <div class="nav-item" onclick="nav('clasificacion', this)"><i class="ti ti-list-numbers" aria-hidden="true"></i> Clasificación</div>
+    <div class="nav-item" onclick="nav('simulador', this)"><i class="ti ti-device-gamepad-2" aria-hidden="true"></i> Simulador</div>
+    <div class="nav-item" onclick="nav('fasefinal', this)"><i class="ti ti-tournament" aria-hidden="true"></i> Fase Final</div>
+    <div class="nav-section">Experiencia</div>
+    <div class="nav-item" onclick="nav('estadios', this)"><i class="ti ti-building-stadium" aria-hidden="true"></i> Estadios</div>
+    <div class="nav-item" onclick="nav('geolocalizacion', this)"><i class="ti ti-map-pin" aria-hidden="true"></i> Geolocalización</div>
+    <div class="nav-item" onclick="nav('boletos', this)"><i class="ti ti-ticket" aria-hidden="true"></i> Boletos</div>
+    <div class="nav-section" id="admin-section">Sistema</div>
+    <div class="nav-item" id="admin-nav" onclick="nav('admin', this)"><i class="ti ti-settings" aria-hidden="true"></i> Administrador</div>
+    <div class="nav-item" onclick="nav('acerca', this)"><i class="ti ti-info-circle" aria-hidden="true"></i> Acerca del Proyecto</div>
+    <div class="sidebar-bottom">
+      <button class="btn-logout" onclick="doLogout()"><i class="ti ti-logout"></i> Cerrar sesión</button>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main" style="display:none">
+    <div class="topbar">
+      <div class="topbar-title" id="topbar-title">DASHBOARD</div>
+      <div class="topbar-actions">
+        <button class="btn-sm" id="db-badge" style="display:none"><i class="ti ti-database" aria-hidden="true"></i> PostgreSQL</button>
+        <button class="btn-sm primary" onclick="checkDbStatus()"><i class="ti ti-plug" aria-hidden="true"></i> Estado DB</button>
+      </div>
+    </div>
+    <div id="content">
+
+      <!-- DASHBOARD -->
+      <div class="section active" id="sec-dashboard">
+        <div class="db-metrics">
+          <div class="metric-card highlight">
+            <div class="metric-label">Selecciones</div>
+            <div class="metric-value">48</div>
+            <div class="metric-sub">3 sedes del torneo</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Partidos cargados</div>
+            <div class="metric-value">72</div>
+            <div class="metric-sub">27 jugados · 45 programados</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Estadios</div>
+            <div class="metric-value">16</div>
+            <div class="metric-sub">MX, USA, CAN</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Goles registrados</div>
+            <div class="metric-value">89</div>
+            <div class="metric-sub">Resultados capturados</div>
+          </div>
+        </div>
+        <div class="db-grid">
+          <div class="db-card">
+            <div class="db-card-title"><i class="ti ti-ball-football" aria-hidden="true"></i> Partidos recientes</div>
+            <div class="match-item">
+              <div class="match-teams"><span class="flag-icon">🇨🇦</span><span>Canadá</span></div>
+              <div class="match-score">5 — 0</div>
+              <div class="match-teams"><span>Catar</span><span class="flag-icon">🇶🇦</span></div>
+              <span class="status-badge status-done">Final</span>
+            </div>
+            <div class="match-item">
+              <div class="match-teams"><span class="flag-icon">🇨🇭</span><span>Suiza</span></div>
+              <div class="match-score">4 — 1</div>
+              <div class="match-teams"><span>Bosnia</span><span class="flag-icon">🇧🇦</span></div>
+              <span class="status-badge status-done">Final</span>
+            </div>
+            <div class="match-item">
+              <div class="match-teams"><span class="flag-icon">🇨🇿</span><span>Chequia</span></div>
+              <div class="match-score">1 — 1</div>
+              <div class="match-teams"><span>Sudáfrica</span><span class="flag-icon">🇿🇦</span></div>
+              <span class="status-badge status-done">Final</span>
+            </div>
+            <div class="match-item">
+              <div class="match-teams"><span class="flag-icon">🇲🇽</span><span>México</span></div>
+              <div class="match-score">vs</div>
+              <div class="match-teams"><span>Corea del Sur</span><span class="flag-icon">🇰🇷</span></div>
+              <span class="status-badge status-next">21:00</span>
+            </div>
+          </div>
+          <div class="db-card">
+            <div class="db-card-title"><i class="ti ti-chart-bar" aria-hidden="true"></i> Tabla de líderes — Fase grupos</div>
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <tr style="color:var(--color-text-secondary);font-size:11px">
+                <th style="padding:4px 6px;text-align:left">Selección</th>
+                <th style="padding:4px;text-align:center">PJ</th>
+                <th style="padding:4px;text-align:center">Pts</th>
+                <th style="padding:4px;text-align:center">GF</th>
+                <th style="padding:4px;text-align:center">GC</th>
+              </tr>
+              <tr id="tr1"><td style="padding:5px 6px"><span style="font-size:13px">🇩🇪</span> Alemania</td><td style="text-align:center">1</td><td style="text-align:center;font-weight:600">3</td><td style="text-align:center;color:#22c55e">7</td><td style="text-align:center">1</td></tr>
+              <tr id="tr2"><td style="padding:5px 6px"><span style="font-size:13px">🇨🇦</span> Canadá</td><td style="text-align:center">2</td><td style="text-align:center;font-weight:600">4</td><td style="text-align:center;color:#22c55e">6</td><td style="text-align:center">1</td></tr>
+              <tr id="tr3"><td style="padding:5px 6px"><span style="font-size:13px">🇸🇪</span> Suecia</td><td style="text-align:center">1</td><td style="text-align:center;font-weight:600">3</td><td style="text-align:center;color:#22c55e">5</td><td style="text-align:center">1</td></tr>
+              <tr id="tr4"><td style="padding:5px 6px"><span style="font-size:13px">🇳🇴</span> Noruega</td><td style="text-align:center">1</td><td style="text-align:center;font-weight:600">3</td><td style="text-align:center;color:#22c55e">4</td><td style="text-align:center">1</td></tr>
+              <tr id="tr5"><td style="padding:5px 6px"><span style="font-size:13px">🇺🇸</span> Estados Unidos</td><td style="text-align:center">1</td><td style="text-align:center;font-weight:600">3</td><td style="text-align:center;color:#22c55e">4</td><td style="text-align:center">1</td></tr>
+            </table>
+          </div>
+          <div class="db-card">
+            <div class="db-card-title"><i class="ti ti-database" aria-hidden="true"></i> Conexión PostgreSQL</div>
+            <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:8px">Tablas detectadas en la base de datos:</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ selecciones</span>
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ partidos</span>
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ grupos</span>
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ clasificaciones</span>
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ estadios</span>
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ usuarios</span>
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ boletos</span>
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ fase_final</span>
+              <span style="font-size:11px;padding:3px 8px;background:var(--color-background-success);color:var(--color-text-success);border-radius:10px">✓ continentes</span>
+            </div>
+            <div style="margin-top:10px;padding:8px 10px;background:var(--color-background-secondary);border-radius:var(--border-radius-md);font-size:11px;font-family:monospace;color:var(--color-text-secondary)">
+              postgresql://localhost:5432/maps
+            </div>
+          </div>
+          <div class="db-card">
+            <div class="db-card-title"><i class="ti ti-bell" aria-hidden="true"></i> Actividad reciente</div>
+            <div class="news-item"><div class="news-title">Clasificaciones cargadas: 12 grupos y 48 selecciones</div><div class="news-meta">Hoy · sistema</div></div>
+            <div class="news-item"><div class="news-title">Canadá 5–0 Catar registrado en Grupo B</div><div class="news-meta">18 de junio · admin@mundial2026.mx</div></div>
+            <div class="news-item"><div class="news-title">México vs Corea del Sur queda programado</div><div class="news-meta">18 de junio · sistema</div></div>
+            <div class="news-item"><div class="news-title">Calendario de fase de grupos actualizado hasta el 27 de junio</div><div class="news-meta">Hoy · editor@mundial2026.mx</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONFEDERACIONES -->
+      <div class="section" id="sec-confederaciones">
+        <div class="section-header">
+          <div class="section-title">Confederaciones — 6 regiones FIFA</div>
+        </div>
+        <div class="confed-grid" id="confed-grid"></div>
+      </div>
+
+      <!-- GRUPOS (SORTEO) -->
+      <div class="section" id="sec-grupos">
+        <div class="section-header">
+          <div class="section-title">Grupos del Mundial 2026</div>
+          <button class="btn-sm" onclick="checkDbStatus()"><i class="ti ti-refresh" aria-hidden="true"></i> Sync DB</button>
+        </div>
+        <div class="draw-grid" id="draw-grid"></div>
+      </div>
+
+      <!-- CALENDARIO -->
+      <div class="section" id="sec-calendario">
+        <div class="section-header">
+          <div class="section-title">Calendario de partidos</div>
+        </div>
+        <div class="filter-bar">
+          <button class="filter-btn active" onclick="filterPartidos('todos',this)">Todos</button>
+          <button class="filter-btn" onclick="filterPartidos('completado',this)">Completados</button>
+          <button class="filter-btn" onclick="filterPartidos('próximo',this)">Próximos</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo a',this)">A</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo b',this)">B</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo c',this)">C</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo d',this)">D</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo e',this)">E</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo f',this)">F</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo g',this)">G</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo h',this)">H</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo i',this)">I</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo j',this)">J</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo k',this)">K</button>
+          <button class="filter-btn" onclick="filterPartidos('grupo l',this)">L</button>
+        </div>
+        <div id="calendario-list"></div>
+      </div>
+
+      <!-- CLASIFICACIÓN -->
+      <div class="section" id="sec-clasificacion">
+        <div class="section-header">
+          <div class="section-title">Tabla General de los 48 Equipos</div>
+          <button class="btn-sm" onclick="checkDbStatus()"><i class="ti ti-refresh" aria-hidden="true"></i> Sync DB</button>
+        </div>
+        <div class="groups-grid" id="groups-grid"></div>
+      </div>
+
+      <!-- SIMULADOR -->
+      <div class="section" id="sec-simulador">
+        <div class="section-header">
+          <div class="section-title">Simulador de partidos</div>
+        </div>
+        <div id="simulador-box"></div>
+      </div>
+
+      <!-- FASE FINAL / DIECISEISAVOS -->
+      <div class="section" id="sec-fasefinal">
+        <div class="section-header">
+          <div class="section-title">Fase Final — Eliminatorias</div>
+        </div>
+        <div id="bracket"></div>
+      </div>
+
+      <!-- GEOLOCALIZACIÓN -->
+      <div class="section" id="sec-geolocalizacion">
+        <div class="section-header">
+          <div class="section-title">Geolocalización — Rutas a los estadios</div>
+        </div>
+        <div id="geo-box"></div>
+      </div>
+
+      <!-- BOLETOS -->
+      <div class="section" id="sec-boletos">
+        <div class="section-header">
+          <div class="section-title">Boletos — Compra de entradas</div>
+        </div>
+        <div id="boletos-list"></div>
+      </div>
+
+      <!-- ACERCA DEL PROYECTO -->
+      <div class="section" id="sec-acerca">
+        <div class="section-header">
+          <div class="section-title">Acerca del Proyecto</div>
+        </div>
+        <div id="acerca-box"></div>
+      </div>
+
+      <!-- SELECCIONES -->
+      <div class="section" id="sec-selecciones">
+        <div class="section-header">
+          <div class="section-title">Selecciones — Plantillas</div>
+          <button class="btn-sm primary" id="btn-add-sel" onclick="nav('admin', document.querySelector('.nav-item[onclick*=admin]'))">
+            <i class="ti ti-plus" aria-hidden="true"></i> Nueva selección
+          </button>
+        </div>
+        <div class="sel-grid" id="sel-grid"></div>
+      </div>
+
+      <!-- ESTADIOS -->
+      <div class="section" id="sec-estadios">
+        <div class="section-header">
+          <div class="section-title">Estadios y Rutas</div>
+        </div>
+        <div class="estadios-grid" id="estadios-grid"></div>
+      </div>
+
+      <!-- ADMIN -->
+      <div class="section" id="sec-admin">
+        <div id="admin-no-access" class="no-access" style="display:none">
+          <i class="ti ti-lock" aria-hidden="true"></i>
+          <div style="font-size:15px;font-weight:500;margin-bottom:6px">Acceso restringido</div>
+          <div style="font-size:13px">Solo los administradores pueden acceder al panel de gestión.</div>
+        </div>
+        <div id="admin-panel">
+          <div class="admin-tabs">
+            <div class="admin-tab active" onclick="adminTab('selecciones',this)">Selecciones</div>
+            <div class="admin-tab" onclick="adminTab('estadios',this)">Estadios</div>
+            <div class="admin-tab" onclick="adminTab('partidos',this)">Partidos</div>
+            <div class="admin-tab" onclick="adminTab('grupos',this)">Grupos</div>
+            <div class="admin-tab" onclick="adminTab('usuarios',this)">Usuarios</div>
+          </div>
+          <div id="admin-content"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- MAPA MODAL — fuera de las secciones para que Leaflet siempre vea dimensiones reales -->
+<div id="map-overlay-container" style="display:none">
+  <div class="map-overlay" id="map-overlay">
+    <div class="map-modal">
+      <div class="map-modal-header">
+        <div class="map-modal-title" id="map-modal-title">Ruta al Estadio</div>
+        <button class="map-close" onclick="closeMap()">×</button>
+      </div>
+      <div class="map-placeholder" style="padding:0;overflow:hidden;border-radius:var(--border-radius-lg);position:relative">
+        <div id="leaflet-map" style="width:100%;height:360px;border-radius:var(--border-radius-lg)"></div>
+        <div class="map-city-label" id="map-city-label" style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:#fff;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;pointer-events:none;z-index:500">Estadio</div>
+      </div>
+      <div class="map-info">
+        <ul class="route-steps" id="route-steps"></ul>
+      </div>
+      <div class="route-share-bar">
+        <span style="font-size:12px;color:var(--color-text-secondary);margin-right:auto">Compartir ruta:</span>
+        <button class="share-btn share-wa" onclick="shareRoute('whatsapp')"><i class="ti ti-brand-whatsapp"></i> WhatsApp</button>
+        <button class="share-btn share-fb" onclick="shareRoute('facebook')">Facebook</button>
+        <button class="share-btn share-ig" onclick="shareRoute('instagram')">Instagram</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DETALLE DE SELECCIÓN -->
+<div id="sel-overlay-container" style="display:none">
+  <div class="map-overlay" onclick="if(event.target===this)closeSeleccion()">
+    <div class="sel-modal" id="sel-modal-body"></div>
+  </div>
+</div>
+
+<script src="equipos.js"></script>
+<script src="app.js"></script>
+<!-- Leaflet cargado al final para garantizar que el DOM esté listo -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</body>
+</html>
