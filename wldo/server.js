@@ -123,6 +123,64 @@ async function getUserIdByEmail(email) {
   return result.rows[0] ? result.rows[0].id_usuario : null;
 }
 
+// ─── TIEMPO REAL (Server-Sent Events) ────────────────────────────────────────────
+// Mantiene abiertas las conexiones de todos los navegadores y les "empuja" los
+// cambios (simulaciones y restablecimientos) para que cada pestaña se actualice sola,
+// sin recargar. Es la pieza que GitHub por sí solo no da: el estado compartido en vivo.
+const sseClients = new Set();
+
+// Envía un mensaje a TODOS los navegadores conectados.
+function sseBroadcast(payload) {
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(data); } catch (_) { /* se limpia solo en el evento 'close' */ }
+  }
+}
+
+// Devuelve la lista de partidos simulados actuales (para poner al día a quien se conecta).
+async function obtenerSimulaciones() {
+  const r = await pool.query(
+    `SELECT sl.nombre AS local, sv.nombre AS visitante,
+            p.goles_local AS "golesLocal", p.goles_visitante AS "golesVisitante"
+       FROM partidos p
+       JOIN selecciones sl ON sl.id_seleccion = p.id_local
+       JOIN selecciones sv ON sv.id_seleccion = p.id_visitante
+      WHERE p.fase = 'Simulación'
+      ORDER BY p.id_partido`
+  );
+  return r.rows;
+}
+
+// Canal de eventos: el navegador se suscribe con new EventSource('/api/events').
+app.get('/api/events', async (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'           // evita que proxies almacenen en búfer el stream
+  });
+  if (res.flushHeaders) res.flushHeaders();
+  res.write('retry: 3000\n\n');          // si la conexión se cae, el navegador reintenta a los 3s
+  sseClients.add(res);
+
+  // Estado inicial: al conectarse, se le envían las simulaciones ya existentes
+  // para que una pestaña que abre tarde quede igual que las demás.
+  try {
+    const partidos = await obtenerSimulaciones();
+    res.write(`data: ${JSON.stringify({ tipo: 'sync', partidos })}\n\n`);
+  } catch (_) { /* si la DB falla, el navegador sigue conectado para recibir eventos */ }
+
+  // Latido cada 25s para que la conexión no se cierre por inactividad.
+  const latido = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch (_) {}
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(latido);
+    sseClients.delete(res);
+  });
+});
+
 // ─── SELECCIONES ───────────────────────────────────────────────────────────────
 // GET   /api/selecciones         → listar todas
 // POST  /api/selecciones         → crear nueva
@@ -428,7 +486,7 @@ async function recomputarPosiciones(client, idGrupo) {
 
 // Registra un partido simulado y actualiza la clasificación si ambos son del mismo grupo.
 app.post('/api/partidos/simular', async (req, res) => {
-  const { local, visitante, golesLocal, golesVisitante } = req.body || {};
+  const { local, visitante, golesLocal, golesVisitante, origin } = req.body || {};
   const gl = parseInt(golesLocal, 10);
   const gv = parseInt(golesVisitante, 10);
   if (!local || !visitante || Number.isNaN(gl) || Number.isNaN(gv)) {
@@ -465,6 +523,19 @@ app.post('/api/partidos/simular', async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    // Avisa en vivo a todos los navegadores conectados para que actualicen sus tablas.
+    // origin identifica a la pestaña que originó el cambio: ella ya lo aplicó localmente,
+    // así que lo ignorará y no lo contará dos veces.
+    sseBroadcast({
+      tipo: 'simular',
+      local, visitante,
+      golesLocal: gl, golesVisitante: gv,
+      grupo: grupoNombre,
+      actualizoClasificacion: !!mismoGrupo,
+      origin: origin || null
+    });
+
     res.json({ ok: true, data: { id_partido: ins.rows[0].id, actualizoClasificacion: !!mismoGrupo, grupo: grupoNombre } });
   } catch (e) {
     await client.query('ROLLBACK');
@@ -498,6 +569,10 @@ app.post('/api/partidos/simular/reset', async (req, res) => {
     for (const g of gruposAfectados) await recomputarPosiciones(client, g);
     const del = await client.query("DELETE FROM partidos WHERE fase='Simulación'");
     await client.query('COMMIT');
+
+    // Avisa en vivo a todos para que reviertan sus tablas a los resultados oficiales.
+    sseBroadcast({ tipo: 'reset', eliminados: del.rowCount, origin: (req.body && req.body.origin) || null });
+
     res.json({ ok: true, data: { eliminados: del.rowCount } });
   } catch (e) {
     await client.query('ROLLBACK');

@@ -98,6 +98,99 @@ async function apiDelete(path) {
   }
 }
 
+// ─── SINCRONIZACIÓN EN TIEMPO REAL (SSE) ─────────────────────────────────────────
+// Cada pestaña abre un canal permanente con el servidor. Cuando un compañero simula
+// un partido (o restablece las tablas), el servidor lo "empuja" por ese canal y esta
+// pestaña actualiza sus tablas sola, sin recargar. Ese es el objetivo del proyecto.
+//
+// IMPORTANTE: para que funcione ENTRE VARIAS PERSONAS, todas deben usar el MISMO
+// servidor (uno solo en la nube), no un backend en el localhost de cada quien.
+// En ese caso, apunta API_BASE (arriba) a la URL del servidor compartido.
+
+// Identificador único de ESTA pestaña. Sirve para no aplicar dos veces el cambio
+// que uno mismo originó (el servidor nos reenvía nuestro propio evento).
+var CLIENT_ID = 'c-' + Math.random().toString(36).slice(2) + '-' + Date.now().toString(36);
+var _sseConn = null;
+
+function iniciarTiempoReal() {
+  if (_sseConn) return;                          // ya conectado
+  if (typeof EventSource === 'undefined') return; // navegador sin soporte
+  try {
+    _sseConn = new EventSource(API_BASE + '/events');
+  } catch (e) { return; }
+
+  _sseConn.onopen = function () { actualizarBadgeVivo(true); };
+
+  _sseConn.onerror = function () {
+    // EventSource reintenta la conexión automáticamente; solo reflejamos el estado.
+    actualizarBadgeVivo(false);
+  };
+
+  _sseConn.onmessage = function (ev) {
+    var msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (!msg || !msg.tipo) return;
+
+    // Estado inicial (o tras reconectar): rehacemos las tablas desde cero con lo que
+    // manda el servidor. Es idempotente, así que da igual cuántas veces llegue.
+    if (msg.tipo === 'sync') { sincronizarDesdeServidor(msg.partidos); return; }
+
+    // Si el evento lo originó esta misma pestaña, ya lo aplicamos localmente. Ignorar.
+    if (msg.origin && msg.origin === CLIENT_ID) return;
+
+    if (msg.tipo === 'simular') {
+      aplicarResultado(msg.local, msg.visitante, msg.golesLocal, msg.golesVisitante);
+      refrescarVistaActual();
+      showToast('⚽ Un compañero simuló: ' + msg.local + ' ' + msg.golesLocal + ' – ' +
+                msg.golesVisitante + ' ' + msg.visitante, 'info');
+    } else if (msg.tipo === 'reset') {
+      revertirTablasLocal();
+      showToast('🔄 Un compañero restableció las tablas', 'info');
+    }
+  };
+}
+
+// Reconstruye las tablas locales a partir del estado autoritativo del servidor:
+// vuelve a los resultados oficiales y reaplica todas las simulaciones vigentes.
+function sincronizarDesdeServidor(partidos) {
+  if (_snapshotTablas) revertirTablasLocal();    // deja las tablas oficiales y limpia el snapshot
+  if (partidos && partidos.length) {
+    partidos.forEach(function (p) {
+      aplicarResultado(p.local, p.visitante, p.golesLocal, p.golesVisitante);
+    });
+  }
+  refrescarVistaActual();
+}
+
+// Repinta la sección visible actual tras un cambio recibido en vivo.
+function refrescarVistaActual() {
+  if (currentSection === 'grupos') renderDraw();
+  else if (currentSection === 'clasificacion') renderGrupos();
+  else if (currentSection === 'selecciones') renderSelecciones();
+  // grupos y clasificación también se repintan dentro de aplicarResultado.
+}
+
+// Indicador flotante "En vivo" para que se vea que la sincronización está activa.
+function actualizarBadgeVivo(online) {
+  var b = document.getElementById('live-sync-badge');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'live-sync-badge';
+    b.style.cssText = 'position:fixed;top:12px;right:16px;z-index:9998;display:flex;' +
+      'align-items:center;gap:6px;padding:5px 11px;border-radius:999px;font-size:11.5px;' +
+      'font-weight:600;box-shadow:0 2px 12px rgba(0,0,0,.25);transition:opacity .3s';
+    document.body.appendChild(b);
+  }
+  if (online) {
+    b.style.background = 'rgba(34,197,94,.15)'; b.style.color = '#16a34a';
+    b.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:#22c55e;' +
+      'animation:pulse 1.6s infinite"></span> En vivo';
+  } else {
+    b.style.background = 'rgba(239,68,68,.15)'; b.style.color = '#dc2626';
+    b.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:#ef4444"></span> Reconectando…';
+  }
+}
+
 // ─── AUTENTICACIÓN ─────────────────────────────────────────────────────────────
 // La pastilla solo autollena las credenciales demo; el rol real lo define el login.
 function selectRole(el) {
@@ -170,6 +263,7 @@ function enterApp(user) {
   renderBoletos();
   renderAcerca();
   renderAdmin();
+  iniciarTiempoReal();   // abre el canal en vivo para recibir simulaciones de los demás
 }
 
 function doLogout() {
@@ -577,25 +671,30 @@ function aplicarResultado(homeN, awayN, hg, ag) {
 
 // Restablece las tablas al estado oficial: revierte los cambios locales de la sesión
 // y borra los partidos simulados de la base de datos (revirtiendo la clasificación).
+// Revierte las tablas locales a los resultados oficiales (sin tocar la base de datos).
+// La usan tanto el botón «Restablecer» como el reset recibido en vivo de un compañero.
+function revertirTablasLocal() {
+  if (!_snapshotTablas) return false;
+  var snap = _snapshotTablas;
+  Object.keys(statsByTeam).forEach(k => delete statsByTeam[k]);
+  Object.entries(snap.statsByTeam).forEach(([k, v]) => { statsByTeam[k] = Object.assign({}, v); });
+  gruposData.length = 0;
+  snap.gruposData.forEach(g => gruposData.push(JSON.parse(JSON.stringify(g))));
+  tablaGeneral.length = 0;
+  snap.tablaGeneral.forEach(r => tablaGeneral.push(r.slice()));
+  _snapshotTablas = null;
+  rebuildSelData();
+  renderDraw(); renderGrupos(); renderSelecciones();
+  return true;
+}
+
 async function restablecerTablas() {
   if (!puede('simular')) { showToast('Tu rol no permite modificar las tablas', 'error'); return; }
 
-  var huboLocal = !!_snapshotTablas;
-  if (huboLocal) {
-    var snap = _snapshotTablas;
-    Object.keys(statsByTeam).forEach(k => delete statsByTeam[k]);
-    Object.entries(snap.statsByTeam).forEach(([k, v]) => { statsByTeam[k] = Object.assign({}, v); });
-    gruposData.length = 0;
-    snap.gruposData.forEach(g => gruposData.push(JSON.parse(JSON.stringify(g))));
-    tablaGeneral.length = 0;
-    snap.tablaGeneral.forEach(r => tablaGeneral.push(r.slice()));
-    _snapshotTablas = null;
-    rebuildSelData();
-    renderDraw(); renderGrupos(); renderSelecciones();
-  }
+  var huboLocal = revertirTablasLocal();
 
-  // Revertir también en la base de datos.
-  var resp = await apiPost('/partidos/simular/reset', {});
+  // Revertir también en la base de datos (y avisar en vivo a los demás con origin).
+  var resp = await apiPost('/partidos/simular/reset', { origin: CLIENT_ID });
   if (resp && resp.ok) {
     var n = resp.data ? (resp.data.eliminados || 0) : 0;
     showToast('Restablecido: ' + n + ' simulación(es) borradas de la base de datos' + (huboLocal ? ' y tablas locales' : ''), 'success');
@@ -678,7 +777,8 @@ function simularPartido() {
 // Guarda el partido simulado en la base de datos y refleja el estado en la interfaz.
 async function persistirSimulacion(homeN, awayN, hg, ag) {
   var resp = await apiPost('/partidos/simular', {
-    local: homeN, visitante: awayN, golesLocal: hg, golesVisitante: ag
+    local: homeN, visitante: awayN, golesLocal: hg, golesVisitante: ag,
+    origin: CLIENT_ID   // identifica esta pestaña para no aplicar el cambio dos veces
   });
   var el = document.getElementById('sim-db-status');
   if (!el) return;
