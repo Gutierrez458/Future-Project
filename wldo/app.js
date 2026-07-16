@@ -171,7 +171,8 @@ function refrescarVistaActual() {
   if (currentSection === 'grupos') renderDraw();
   else if (currentSection === 'clasificacion') renderGrupos();
   else if (currentSection === 'selecciones') renderSelecciones();
-  // grupos y clasificación también se repintan dentro de aplicarResultado.
+  else if (currentSection === 'calendario') renderPartidos(calendarioFiltro);
+  // grupos, clasificación y calendario también se repintan dentro de aplicarResultado.
 }
 
 // Indicador flotante "En vivo" para que se vea que la sincronización está activa.
@@ -358,10 +359,32 @@ function renderGrupos() {
 }
 
 // ─── RENDER CALENDARIO ─────────────────────────────────────────────────────────
+// Partidos simulados en esta sesión: se muestran en el Calendario, arriba del todo.
+// Se mantiene sincronizado en todos los navegadores (se llena al simular/recibir y se
+// vacía al restablecer), reflejando lo que hay en la base de datos.
+var partidosSimulados = [];
+var calendarioFiltro = 'todos';
+
+// Agrega un partido simulado como tarjeta del calendario (el más reciente queda arriba).
+function registrarSimuladoEnCalendario(homeN, awayN, hg, ag) {
+  var mismoGrupo = groupByTeam[homeN] && groupByTeam[homeN] === groupByTeam[awayN];
+  var g = mismoGrupo ? groupByTeam[homeN] : null;
+  partidosSimulados.unshift({
+    home: flagByTeam[homeN] || '🏳️', homeN: homeN,
+    away: flagByTeam[awayN] || '🏳️', awayN: awayN,
+    score: hg + ' — ' + ag, status: 'simulado', time: 'Sim',
+    stadium: 'Partido simulado', date: '⚽ Partidos simulados',
+    group: g ? ('grupo ' + g.toLowerCase()) : 'cruce entre grupos', grupoReal: g
+  });
+}
+
 function renderPartidos(f) {
+  calendarioFiltro = f;
   var list = document.getElementById('calendario-list');
   if (!list) return;
-  var data = f === 'todos' ? partidosData : partidosData.filter(p => p.status === f || p.group === f);
+  var base = f === 'todos' ? partidosData : partidosData.filter(p => p.status === f || p.group === f);
+  // Los simulados se muestran arriba en la vista general y en el filtro «completado».
+  var data = (f === 'todos' || f === 'completado') ? partidosSimulados.concat(base) : base;
 
   // Agrupar por fecha respetando el orden en que aparecen
   var groups = [];
@@ -381,10 +404,10 @@ function renderPartidos(f) {
       <div class="cal-day-head"><i class="ti ti-calendar" aria-hidden="true"></i> ${date}</div>
       <div class="partidos-list">
         ${byDate[date].map(p => `
-        <div class="partido-card">
+        <div class="partido-card" style="${p.status === 'simulado' ? 'border-left:3px solid #22c55e' : ''}">
           <div class="partido-header">
             <span><i class="ti ti-map-pin" style="font-size:12px"></i> ${p.stadium}</span>
-            <span class="status-badge ${p.status === 'en vivo' ? 'status-live' : p.status === 'completado' ? 'status-done' : 'status-next'}">${p.status === 'en vivo' ? 'EN VIVO' : p.status === 'completado' ? 'Finalizado' : 'Próximo'}</span>
+            <span class="status-badge ${p.status === 'en vivo' ? 'status-live' : p.status === 'simulado' ? 'status-done' : p.status === 'completado' ? 'status-done' : 'status-next'}">${p.status === 'en vivo' ? 'EN VIVO' : p.status === 'simulado' ? '⚽ Simulado' : p.status === 'completado' ? 'Finalizado' : 'Próximo'}</span>
           </div>
           <div class="partido-body">
             <div class="team-match"><div class="team-match-flag">${p.home}</div><div class="team-match-name">${p.homeN}</div></div>
@@ -667,9 +690,11 @@ function aplicarResultado(homeN, awayN, hg, ag) {
     renderSelecciones();
   }
 
-  // 3) Repintar las secciones con tablas
+  // 3) Registrar el partido en el Calendario y repintar las secciones con tablas
+  registrarSimuladoEnCalendario(homeN, awayN, hg, ag);
   renderDraw();
   renderGrupos();
+  renderPartidos(calendarioFiltro);
   return mismoGrupo ? groupByTeam[homeN] : null;
 }
 
@@ -687,8 +712,9 @@ function revertirTablasLocal() {
   tablaGeneral.length = 0;
   snap.tablaGeneral.forEach(r => tablaGeneral.push(r.slice()));
   _snapshotTablas = null;
+  partidosSimulados.length = 0;   // limpiar los simulados del calendario
   rebuildSelData();
-  renderDraw(); renderGrupos(); renderSelecciones();
+  renderDraw(); renderGrupos(); renderSelecciones(); renderPartidos(calendarioFiltro);
   return true;
 }
 
