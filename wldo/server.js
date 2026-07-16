@@ -587,6 +587,31 @@ app.post('/api/partidos/simular/reset', async (req, res) => {
   }
 });
 
+// ─── FASE FINAL (eliminatorias, desde la base de datos) ─────────────────────────
+// Devuelve los partidos de fase_final unidos a partidos y selecciones, en orden.
+app.get('/api/fasefinal', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT ff.etapa,
+              sl.nombre  AS local,          sl.bandera AS "localBandera",
+              sv.nombre  AS visitante,      sv.bandera AS "visitanteBandera",
+              p.goles_local     AS "golesLocal",
+              p.goles_visitante AS "golesVisitante",
+              to_char(p.fecha_hora, 'DD/MM/YYYY') AS fecha,
+              to_char(p.fecha_hora, 'HH24:MI')    AS hora,
+              p.estado,
+              sg.nombre AS avanza
+         FROM fase_final ff
+         JOIN partidos    p  ON p.id_partido    = ff.id_partido
+         JOIN selecciones sl ON sl.id_seleccion = p.id_local
+         JOIN selecciones sv ON sv.id_seleccion = p.id_visitante
+         LEFT JOIN selecciones sg ON sg.id_seleccion = ff.clasifica_id_seleccion
+        ORDER BY p.fecha_hora, ff.id_fase_final`
+    );
+    send(res, r.rows);
+  } catch (e) { err(res, e); }
+});
+
 // ─── GRUPOS ────────────────────────────────────────────────────────────────────
 app.get('/api/grupos', async (req, res) => {
   try {

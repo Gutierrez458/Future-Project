@@ -310,6 +310,7 @@ function nav(sec, el) {
   if (sec === 'grupos') renderDraw();
   if (sec === 'clasificacion') renderGrupos();
   if (sec === 'admin') renderAdmin();
+  if (sec === 'fasefinal' && !faseFinalData) renderBracket();
   if (sec === 'geolocalizacion' && leafletMap) setTimeout(function(){ leafletMap.invalidateSize(true); }, 200);
 }
 
@@ -828,8 +829,16 @@ async function persistirSimulacion(homeN, awayN, hg, ag) {
   }
 }
 
-// ─── FASE FINAL (ELIMINATORIAS REALES DEL TORNEO) ───────────────────────────────
-var bracketRound = 'd16';
+// ─── FASE FINAL (desde la base de datos) ────────────────────────────────────────
+var bracketRound = 'Octavos';
+var faseFinalData = null;   // cache de la fase final traída de la base de datos
+// Pestañas de la fase final → etapas tal como se guardan en la DB
+var FF_TABS = [
+  { label: 'Octavos',   etapas: ['Octavos de final'] },
+  { label: 'Cuartos',   etapas: ['Cuartos de final'] },
+  { label: 'Semifinal', etapas: ['Semifinal'] },
+  { label: 'Final',     etapas: ['Tercer puesto', 'Final'] }
+];
 function bracketTab(round, el) {
   bracketRound = round;
   document.querySelectorAll('#bracket-tabs .admin-tab').forEach(t => t.classList.remove('active'));
@@ -837,85 +846,90 @@ function bracketTab(round, el) {
   renderBracketRound();
 }
 
-// Tarjeta de partido eliminatorio ya jugado
-function koPlayedCard(m, n, costo) {
-  var local = m[0], gl = m[1], gv = m[2], visit = m[3], ganador = m[4], fecha = m[5], sede = m[6], nota = m[7];
-  var lWin = ganador === local, vWin = ganador === visit;
-  return `
-    <div class="d16-card">
-      <div class="d16-head">Partido ${n}</div>
-      <div class="ko-row ${lWin ? 'ko-win' : ''}">
-        <span class="d16-flag">${flagByTeam[local] || '🏳️'}</span>
-        <span class="ko-name">${local}</span><span class="ko-goals">${gl}</span>
-      </div>
-      <div class="ko-row ${vWin ? 'ko-win' : ''}">
-        <span class="d16-flag">${flagByTeam[visit] || '🏳️'}</span>
-        <span class="ko-name">${visit}</span><span class="ko-goals">${gv}</span>
-      </div>
-      <div class="d16-meta">
-        <div><i class="ti ti-calendar"></i> ${fecha} · <i class="ti ti-map-pin"></i> ${sede}</div>
-        ${nota ? `<div class="ko-nota"><i class="ti ti-info-circle"></i> ${nota}</div>` : ''}
-        <div><i class="ti ti-ticket"></i> ${costo}</div>
-      </div>
-    </div>`;
+// Formatea 'DD/MM/YYYY' → '9 jul.' (sin usar Date, para evitar desfases de zona horaria)
+function formatFechaFF(f) {
+  if (!f) return '';
+  var p = String(f).split('/');   // [DD, MM, YYYY]
+  if (p.length < 2) return f;
+  var meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  return parseInt(p[0], 10) + ' ' + (meses[parseInt(p[1], 10) - 1] || '') + '.';
 }
-// Tarjeta de partido eliminatorio por jugarse (cuartos)
-function koFixtureCard(m, n) {
-  var local = m[0], visit = m[1], fecha = m[2], sede = m[3], hora = m[4];
+
+// Tarjeta de un partido de fase final (jugado o por jugarse) con datos de la base.
+function faseCard(m) {
+  var fl = flagByTeam[m.local] || m.localBandera || '🏳️';
+  var fv = flagByTeam[m.visitante] || m.visitanteBandera || '🏳️';
+  var jugado = m.estado === 'completado' && m.golesLocal !== null && m.golesLocal !== undefined;
+  var fecha = formatFechaFF(m.fecha);
+  if (jugado) {
+    var lWin = m.avanza === m.local, vWin = m.avanza === m.visitante;
+    return `
+      <div class="d16-card">
+        <div class="d16-head">${m.etapa}</div>
+        <div class="ko-row ${lWin ? 'ko-win' : ''}">
+          <span class="d16-flag">${fl}</span>
+          <span class="ko-name">${m.local}</span><span class="ko-goals">${m.golesLocal}</span>
+        </div>
+        <div class="ko-row ${vWin ? 'ko-win' : ''}">
+          <span class="d16-flag">${fv}</span>
+          <span class="ko-name">${m.visitante}</span><span class="ko-goals">${m.golesVisitante}</span>
+        </div>
+        <div class="d16-meta">
+          <div><i class="ti ti-calendar"></i> ${fecha}${m.hora ? ' · ' + m.hora : ''}</div>
+          ${m.avanza ? `<div class="ko-nota"><i class="ti ti-arrow-up-right"></i> Avanza: ${flagByTeam[m.avanza] || ''} ${m.avanza}</div>` : ''}
+        </div>
+      </div>`;
+  }
   return `
-    <div class="d16-card">
-      <div class="d16-head">Cuartos · Partido ${n}</div>
+    <div class="d16-card" style="border-left:3px solid #f59e0b">
+      <div class="d16-head">${m.etapa}</div>
       <div class="d16-teams">
-        <div class="d16-team"><span class="d16-flag">${flagByTeam[local] || '🏳️'}</span><span class="d16-name">${local}</span></div>
+        <div class="d16-team"><span class="d16-flag">${fl}</span><span class="d16-name">${m.local}</span></div>
         <div class="d16-vs">VS</div>
-        <div class="d16-team"><span class="d16-flag">${flagByTeam[visit] || '🏳️'}</span><span class="d16-name">${visit}</span></div>
+        <div class="d16-team"><span class="d16-flag">${fv}</span><span class="d16-name">${m.visitante}</span></div>
       </div>
       <div class="d16-meta">
-        <div><i class="ti ti-calendar"></i> ${fecha} · ${hora}</div>
-        <div><i class="ti ti-map-pin"></i> ${sede}</div>
-        <div><i class="ti ti-ticket"></i> Desde $4,500 MXN</div>
+        <div><i class="ti ti-calendar"></i> ${fecha}${m.hora ? ' · ' + m.hora : ''}</div>
+        <div><span class="status-badge status-next">Por jugarse</span></div>
       </div>
     </div>`;
 }
 
 function renderBracketRound() {
   var box = document.getElementById('bracket-body');
-  if (!box) return;
-  if (bracketRound === 'd16') {
-    box.innerHTML = `
-      <div class="d16-info"><i class="ti ti-bolt"></i> <b>Ronda de 32</b> · 32 equipos clasificados, 16 partidos (28 jun – 3 jul).</div>
-      <div class="d16-grid">${dieciseisavos.map((m, i) => koPlayedCard(m, 73 + i, 'Desde $2,000 MXN')).join('')}</div>`;
-  } else if (bracketRound === 'octavos') {
-    box.innerHTML = `
-      <div class="d16-info"><i class="ti ti-bolt"></i> <b>Octavos de Final</b> · 16 equipos, 8 partidos (4 – 7 jul).</div>
-      <div class="d16-grid">${octavos.map((m, i) => koPlayedCard(m, 89 + i, 'Desde $3,000 MXN')).join('')}</div>`;
-  } else if (bracketRound === 'cuartos') {
-    box.innerHTML = `
-      <div class="d16-info"><i class="ti ti-clock"></i> <b>Cuartos de Final</b> · cruces definidos, por jugarse (9 – 11 jul).</div>
-      <div class="d16-grid">${cuartos.map((m, i) => koFixtureCard(m, 97 + i)).join('')}</div>
-      <div class="section-title" style="margin:1.5rem 0 0.75rem">Resto del calendario</div>
-      <div class="resto-list">
-        ${restoCalendario.map(r => `
-          <div class="resto-item">
-            <div class="resto-fase">${r[0]}</div>
-            <div class="resto-teams">${r[1]}</div>
-            <div class="resto-meta"><i class="ti ti-calendar"></i> ${r[2]} · <i class="ti ti-map-pin"></i> ${r[3]}</div>
-          </div>`).join('')}
-      </div>`;
+  if (!box || !faseFinalData) return;
+  var tab = FF_TABS.find(function (t) { return t.label === bracketRound; }) || FF_TABS[0];
+  var matches = faseFinalData.filter(function (m) { return tab.etapas.indexOf(m.etapa) !== -1; });
+  if (!matches.length) {
+    box.innerHTML = '<div class="empty-state"><i class="ti ti-calendar-off"></i><div>Sin partidos en esta etapa</div></div>';
+    return;
   }
+  box.innerHTML = '<div class="d16-grid">' + matches.map(faseCard).join('') + '</div>';
 }
 
-function renderBracket() {
+// Carga la fase final desde la base de datos y arma las pestañas por etapa.
+async function renderBracket() {
   var box = document.getElementById('bracket');
   if (!box) return;
-  box.innerHTML = `
-    <div class="admin-tabs" id="bracket-tabs">
-      <div class="admin-tab active" onclick="bracketTab('d16', this)">Dieciseisavos</div>
-      <div class="admin-tab" onclick="bracketTab('octavos', this)">Octavos</div>
-      <div class="admin-tab" onclick="bracketTab('cuartos', this)">Cuartos y +</div>
-    </div>
-    <div id="bracket-body"></div>`;
-  bracketRound = 'd16';
+  box.innerHTML = '<div class="d16-info"><i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Cargando fase final desde la base de datos…</div>';
+  faseFinalData = await apiGet('/fasefinal');
+  if (!faseFinalData || !faseFinalData.length) {
+    box.innerHTML = '<div class="empty-state"><i class="ti ti-trophy-off"></i><div>Aún no hay partidos de fase final en la base de datos.</div></div>';
+    return;
+  }
+  // Solo se muestran las pestañas cuyas etapas existen en los datos.
+  var tabs = FF_TABS.filter(function (t) {
+    return faseFinalData.some(function (m) { return t.etapas.indexOf(m.etapa) !== -1; });
+  });
+  if (!tabs.length) return;
+  if (!tabs.some(function (t) { return t.label === bracketRound; })) bracketRound = tabs[0].label;
+  box.innerHTML =
+    '<div class="admin-tabs" id="bracket-tabs">' +
+    tabs.map(function (t) {
+      return '<div class="admin-tab ' + (t.label === bracketRound ? 'active' : '') +
+             '" onclick="bracketTab(\'' + t.label + '\', this)">' + t.label + '</div>';
+    }).join('') +
+    '</div><div id="bracket-body"></div>';
   renderBracketRound();
 }
 
